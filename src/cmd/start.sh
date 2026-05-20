@@ -28,15 +28,25 @@ done
 
 mkdir -p "$MC_ROOT"
 
+# Decide whether this launch is minting a new key or joining an existing one.
+# Track BEFORE mc_ensure_key_dir creates the directory.
+WAS_NEW=0
 if [[ -z "$KEY" ]]; then
   KEY=$(mc_gen_key)
-  printf '\033[1;36m[memory-claude]\033[0m new key: \033[1m%s\033[0m\n' "$KEY" >&2
+  WAS_NEW=1
+elif [[ ! -d "$MC_ROOT/$KEY" ]]; then
+  WAS_NEW=1
 fi
 
 mc_ensure_key_dir "$KEY"
 mc_register_key "$KEY"
 
 KEY_DIR=$(mc_key_dir "$KEY")
+if (( WAS_NEW )); then
+  printf '\033[1;36m[memory-claude]\033[0m minted new key: \033[1m%s\033[0m\n' "$KEY" >&2
+else
+  printf '\033[1;36m[memory-claude]\033[0m joining key: \033[1m%s\033[0m\n' "$KEY" >&2
+fi
 printf '\033[1;36m[memory-claude]\033[0m pool: %s\n' "$KEY_DIR" >&2
 
 # Validate --resume id belongs to this key
