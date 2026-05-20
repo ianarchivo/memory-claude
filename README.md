@@ -9,15 +9,16 @@ auto-memory writes from one session reach the others live, on the next
 prompt, without restart.
 
 ```bash
-# Terminal 1, in your backend repo
+# Terminal 1, in your backend repo — pick the feature name yourself
 $ cd ~/code/snappr.server
-$ memory-claude
-[memory-claude] new key: copper-otter-canyon
+$ memory-claude new tours-launch
+[memory-claude] minted new key: tours-launch
 [memory-claude] launching claude...
 
-# Terminal 2, in your frontend repo
+# Terminal 2, in your frontend repo — join the same key
 $ cd ~/code/snappr.web
-$ memory-claude copper-otter-canyon
+$ memory-claude tours-launch
+[memory-claude] joining key: tours-launch
 ```
 
 Both sessions now share a key-scoped pool. Whatever the backend session
@@ -83,10 +84,16 @@ shared memory, you either:
 With `memory-claude`:
 
 ```bash
-# In each repo, join the same key
-cd ~/code/snappr.server && memory-claude tours-launch
+# Pick a memorable key name for the feature, mint it explicitly:
+cd ~/code/snappr.server && memory-claude new tours-launch
+
+# In the other repo, join the same key:
 cd ~/code/snappr.web    && memory-claude tours-launch
 ```
+
+`memory-claude new <key>` mints with a name you choose (errors if the key
+already exists, so you can't accidentally inherit a stale pool).
+`memory-claude <key>` joins the key.
 
 Now when the backend session decides the response shape, the frontend
 session sees it on the next prompt and can write the client code against
@@ -99,11 +106,11 @@ Different features get different keys. Memory from feature A never leaks
 into feature B's context.
 
 ```bash
-# Monday: working on virtual tours
-memory-claude tours-launch
+# Monday: spin up a key for virtual tours
+memory-claude new tours-launch
 
-# Tuesday: working on a completely different billing change
-memory-claude billing-prorations
+# Tuesday: spin up a separate key for an unrelated billing change
+memory-claude new billing-prorations
 ```
 
 The two pools never see each other. Each lives at
@@ -191,16 +198,21 @@ installer.
 ## Quickstart
 
 ```bash
-# Mint a new key and start a session (any cwd)
+# Option A: mint a random key
 memory-claude
-# → [memory-claude] new key: space-cat-hunter
-# → [memory-claude] launching claude...
+# → [memory-claude] minted new key: space-cat-hunter
+
+# Option B: mint a key with a name you choose
+memory-claude new tours-launch
+# → [memory-claude] minted new key: tours-launch
+# Errors if 'tours-launch' already exists.
 
 # Join from another terminal, any cwd
-memory-claude space-cat-hunter
+memory-claude tours-launch
+# → [memory-claude] joining key: tours-launch
 
 # Watch what's in the pool, live
-memory-claude space-cat-hunter monitor
+memory-claude tours-launch monitor
 ```
 
 That's the full happy path. Everything below is reference.
@@ -212,21 +224,40 @@ That's the full happy path. Everything below is reference.
 ### Launch / join
 
 ```bash
-# Mint a key and start
+# Mint a RANDOM key (three-word slug) and start
 memory-claude
 
-# Join an existing key
-memory-claude <key>
+# Mint a SPECIFIC key name (errors if it already exists)
+memory-claude new my-feature-key
+
+# Join an existing key — if the key doesn't exist yet, it's also minted
+memory-claude my-feature-key
 
 # Resume a specific past session under a key
-memory-claude <key> --resume <session-uuid>
+memory-claude my-feature-key --resume <session-uuid>
 
 # Pass extra args through to claude unchanged
-memory-claude <key> --model sonnet --add-dir ../other-repo
+memory-claude my-feature-key --model sonnet --add-dir ../other-repo
 ```
+
+The banner tells you which path ran:
+
+```
+[memory-claude] minted new key: my-feature-key    ← brand new
+[memory-claude] joining key: my-feature-key       ← already existed
+```
+
+Key-name rules: 2–64 chars, lowercase, start with a letter, contain only
+`a-z 0-9` and dashes.
 
 Any flag `memory-claude` doesn't recognize is forwarded to `claude`
 verbatim.
+
+**`new` vs bare `<key>`.** Both can create a key, but `new` is the
+safety-first form: it refuses to launch if the key already exists, so
+you don't accidentally join a stale or someone-else's pool when you
+meant to start fresh. Use `new` when you're spinning up a brand-new
+feature; use the bare form when you're (probably) joining one.
 
 ### Inspect
 

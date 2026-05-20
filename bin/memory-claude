@@ -31,8 +31,9 @@ usage() {
 memory-claude — keyed shared memory across Claude Code sessions
 
 Launch:
-  memory-claude                          mint a new key and start a session
-  memory-claude <key>                    join an existing key and start a session
+  memory-claude                          mint a random key and start a session
+  memory-claude new <key>                mint a specific key name (errors if exists)
+  memory-claude <key>                    join <key> if it exists, else mint it
   memory-claude <key> --resume <uuid>    resume a specific session under the key
   memory-claude <key> -- <claude-args>   pass remaining args directly to claude
 
@@ -91,6 +92,29 @@ case "${1:-}" in
   "list")
     # `memory-claude list` (no key) -> list all keys
     exec bash "$CMD/list.sh"
+    ;;
+  "new")
+    # `memory-claude new <key>` -> mint a specific key name (errors if exists).
+    # Remaining args forward to claude unchanged.
+    shift
+    NEW_KEY="${1:-}"
+    if [[ -z "$NEW_KEY" ]]; then
+      echo "memory-claude new: key name required" >&2
+      echo "usage: memory-claude new <key> [claude-args...]" >&2
+      exit 1
+    fi
+    shift
+    if ! is_valid_key "$NEW_KEY"; then
+      echo "memory-claude: '$NEW_KEY' is not a valid key name." >&2
+      echo "Keys must be 2-64 chars, lowercase, start with a letter, contain only a-z 0-9 and dashes." >&2
+      exit 1
+    fi
+    if [[ -d "$MC_ROOT/$NEW_KEY" ]]; then
+      echo "memory-claude: key '$NEW_KEY' already exists at $MC_ROOT/$NEW_KEY." >&2
+      echo "Use 'memory-claude $NEW_KEY' to join it, or pick a different name." >&2
+      exit 1
+    fi
+    exec bash "$CMD/start.sh" "$NEW_KEY" "$@"
     ;;
   "")
     # `memory-claude` with no args -> mint a new key and launch.
