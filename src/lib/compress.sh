@@ -11,12 +11,13 @@ INPUT="$(cat)"
 [[ -z "${INPUT// /}" ]] && exit 0
 
 rule_based() {
-  # Strip code fences, html, and inline backtick spans for brevity scoring.
+  # Strip code fences and html. Unwrap inline backtick spans rather than
+  # removing them, so identifiers (`T`, `any`, etc.) remain in the summary.
   local stripped
   stripped=$(printf '%s' "$INPUT" \
     | awk 'BEGIN{infence=0} /^```/{infence=!infence; next} !infence{print}' \
     | sed -E 's/<[^>]+>//g' \
-    | sed -E 's/`[^`]*`//g')
+    | sed -E 's/`([^`]*)`/\1/g')
 
   # Take the first 1-3 short, informative-looking sentences.
   # Lower min length so short replies still emit at least one bullet.
