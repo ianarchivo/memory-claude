@@ -24,13 +24,21 @@ POOL="$KEY_DIR/pool.ndjson"
 
 render() {
   jq -r '
-    if .kind == "summary" or .kind == "note" then
-      "[\(.ts[11:19]) \(.sid[0:4])] \(.kind | ascii_upcase): \(.text)"
-    elif .kind == "automemory" then
-      "[\(.ts[11:19]) \(.sid[0:4])] AUTOMEM (\(.type // "?")) \(.name): \(.description // "" | .[0:160])"
-    else
-      "[\(.ts[11:19]) \(.sid[0:4])] \(.kind | ascii_upcase) \(.cwd // "")"
-    end
+    (if .git then " @\(.git.branch)" else "" end) as $branch
+    | (if (.tags // []) | length > 0
+       then "  #\(((.tags // []) | join(" #")))"
+       else "" end) as $tagstr
+    | if .kind == "summary" then
+        "[\(.ts[11:19]) \(.sid[0:4])\($branch)] SUMMARY: \(.text)\($tagstr)"
+        + (if .prompt then "\n    Q: \(.prompt[0:140])" else "" end)
+      elif .kind == "note" then
+        "[\(.ts[11:19]) NOTE\($branch)] \(.text)\($tagstr)"
+        + (if .author then "\n    (\(.author))" else "" end)
+      elif .kind == "automemory" then
+        "[\(.ts[11:19]) \(.sid[0:4])] AUTOMEM (\(.type // "?")) \(.name): \(.description // "" | .[0:160])\($tagstr)"
+      else
+        "[\(.ts[11:19]) \(.sid[0:4])] \(.kind | ascii_upcase) \(.cwd // "")"
+      end
   '
 }
 

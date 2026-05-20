@@ -10,6 +10,15 @@ LIB_DIR="${MC_INSTALL_ROOT:-$HOME/.memory-claude}/lib"
 source "$LIB_DIR/core.sh"
 # shellcheck disable=SC1091
 source "$LIB_DIR/locking.sh"
+# tags.sh is newer than the original install — degrade gracefully for users
+# who upgraded without re-running install.sh. When missing, we stub the
+# extractor so the Stop hook keeps writing summaries (just without tags).
+if [[ -f "$LIB_DIR/tags.sh" ]]; then
+  # shellcheck disable=SC1091
+  source "$LIB_DIR/tags.sh"
+else
+  mc_extract_tags() { :; }
+fi
 
 KEY="$MEMORY_CLAUDE_KEY"
 KEY_DIR="$(mc_key_dir "$KEY")"
@@ -70,14 +79,67 @@ if [[ -f "$TRANSCRIPT" ]]; then
   wc -c < "$TRANSCRIPT" 2>/dev/null | tr -d ' ' > "$TR_CURSOR_FILE" || true
 fi
 
+# Git context, captured once per Stop, used by both summary and automemory
+# branches. branch/sha can change mid-session (commits, checkouts), so we
+# refresh each Stop. Cache to seen/<sid>.git for any downstream consumer.
+GIT_BRANCH=""
+GIT_SHA=""
+if git -C "$CWD" rev-parse --git-dir >/dev/null 2>&1; then
+  GIT_BRANCH=$(git -C "$CWD" branch --show-current 2>/dev/null)
+  [[ -n "$GIT_BRANCH" ]] || GIT_BRANCH="(detached)"
+  GIT_SHA=$(git -C "$CWD" rev-parse --short HEAD 2>/dev/null || echo "")
+  printf '%s\t%s\n' "$GIT_BRANCH" "$GIT_SHA" > "$KEY_DIR/seen/$SID.git" 2>/dev/null || true
+fi
+
 if [[ -n "${LAST_TEXT// /}" ]]; then
+  # Capture the user prompt that produced this turn. Walk the transcript
+  # for type:"user" entries whose .message.content is a string (i.e. real
+  # prompts — tool_result messages have array content and would otherwise
+  # pollute this field). Take the last surviving entry.
+  LAST_PROMPT=""
+  if [[ -f "$TRANSCRIPT" ]]; then
+    # Capture real user prompts: strings (not tool_result arrays), not
+    # interrupt markers, length-bounded. Slash-command preambles like
+    # `<command-name>/init</command-name>actual text` get the leading
+    # `<...>` blocks stripped rather than rejected, so the user's real
+    # prompt survives. After stripping, require non-empty content.
+    LAST_PROMPT=$(jq -r '
+      select(.type == "user"
+             and (.message.content | type) == "string"
+             and (.message.content | startswith("[Request interrupted") | not)
+             and (.message.content | length) < 8192)
+      | .message.content
+      | sub("^(<[a-zA-Z][a-zA-Z0-9_-]*>[^<]*</[a-zA-Z][a-zA-Z0-9_-]*>)+"; "")
+      | select(length > 0)
+    ' "$TRANSCRIPT" 2>/dev/null | tail -n 1 || true)
+  fi
+
+  # Tags from cheap keyword extraction over the assistant text. Decoupled
+  # from compression so all modes (rule-based, haiku, auto) get tags.
+  TAGS_RAW=$(printf '%s' "$LAST_TEXT" | mc_extract_tags 2>/dev/null || true)
+  TAGS_JSON=$(printf '%s' "$TAGS_RAW" | jq -R -s '
+    split("\n") | map(select(length > 0))
+  ' 2>/dev/null || echo '[]')
+
   SUMMARY=$(printf '%s' "$LAST_TEXT" | "$LIB_DIR/compress.sh" 2>/dev/null || true)
   if [[ -n "${SUMMARY// /}" ]]; then
     while IFS= read -r line; do
       [[ -z "${line// /}" ]] && continue
       clean=$(printf '%s' "$line" | sed -E 's/^[[:space:]]*[-*•][[:space:]]*//')
-      json_line=$(jq -nc --arg ts "$NOW" --arg sid "$SID" --arg cwd "$CWD" --arg text "$clean" \
-        '{ts:$ts, sid:$sid, kind:"summary", text:$text, cwd:$cwd}')
+      json_line=$(jq -nc \
+        --arg ts "$NOW" \
+        --arg sid "$SID" \
+        --arg cwd "$CWD" \
+        --arg text "$clean" \
+        --arg prompt "$LAST_PROMPT" \
+        --argjson tags "$TAGS_JSON" \
+        --arg branch "$GIT_BRANCH" \
+        --arg sha "$GIT_SHA" '
+          {ts:$ts, sid:$sid, kind:"summary", text:$text, cwd:$cwd}
+          + (if $prompt != "" then {prompt:$prompt} else {} end)
+          + (if ($tags | length) > 0 then {tags:$tags} else {} end)
+          + (if $branch != "" then {git:{branch:$branch, sha:$sha}} else {} end)
+        ')
       mc_append_locked "$POOL" "$json_line"
     done <<< "$SUMMARY"
   fi
@@ -109,11 +171,36 @@ if [[ -d "$AUTOMEM_DIR" ]]; then
              | sed -E 's/  +/ /g' \
              | head -c 300)
 
+      # Extract tags from frontmatter. Supports inline `tags: [a, b, c]`.
+      # Falls back to [type] when type is set; empty otherwise.
+      tags_line=$(awk '/^[[:space:]]*tags:/{print; exit}' "$file" 2>/dev/null || true)
+      tags_csv=""
+      if [[ "$tags_line" =~ tags:[[:space:]]*\[(.*)\] ]]; then
+        tags_csv="${BASH_REMATCH[1]}"
+      fi
+      if [[ -n "$tags_csv" ]]; then
+        am_tags_json=$(printf '%s' "$tags_csv" | jq -R '
+          split(",")
+          | map(ascii_downcase | gsub("^\\s+|\\s+$|\""; ""))
+          | map(select(length > 0))
+          | unique | .[0:5]
+        ')
+      elif [[ -n "$type" ]]; then
+        am_tags_json=$(jq -nc --arg t "$type" '[$t | ascii_downcase]')
+      else
+        am_tags_json='[]'
+      fi
+
+      # Reuse the per-Stop git context captured above (if any).
       json_line=$(jq -nc --arg ts "$NOW" --arg sid "$SID" --arg cwd "$CWD" \
         --arg path "$file" --arg name "$name" --arg type "$type" \
-        --arg desc "$desc" --arg body "$body" '
+        --arg desc "$desc" --arg body "$body" \
+        --argjson tags "$am_tags_json" \
+        --arg branch "${GIT_BRANCH:-}" --arg sha "${GIT_SHA:-}" '
         {ts:$ts, sid:$sid, kind:"automemory", cwd:$cwd, path:$path,
-         name:$name, type:$type, description:$desc, body_excerpt:$body}')
+         name:$name, type:$type, description:$desc, body_excerpt:$body}
+        + (if ($tags | length) > 0 then {tags:$tags} else {} end)
+        + (if $branch != "" then {git:{branch:$branch, sha:$sha}} else {} end)')
       mc_append_locked "$POOL" "$json_line"
 
       (( mtime > NEW_MAX )) && NEW_MAX=$mtime

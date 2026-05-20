@@ -42,7 +42,12 @@ Inspect:
   memory-claude <key> monitor            live view of sessions + pool
   memory-claude <key> show               print pool.md
   memory-claude <key> tail [-n N] [-f]   tail pool.ndjson decoded
+  memory-claude <key> search "<q>" [...] full-text search the pool
   memory-claude <key> compact            rotate + render pool.md
+
+Write:
+  memory-claude <key> note "<text>" [--tag a,b]
+                                         append a manual note to the pool
 
 Manage:
   memory-claude <key> destroy [--yes]    delete key dir
@@ -51,19 +56,26 @@ Manage:
   memory-claude --help
 
 Env:
-  MEMORY_CLAUDE_COMPRESS=haiku           opt into Haiku compression
-                                         (also needs ANTHROPIC_API_KEY)
+  MEMORY_CLAUDE_COMPRESS=auto            prefer Haiku when ANTHROPIC_API_KEY
+                                         is set; fall back to rule-based.
+                                         Other values: rule-based (default),
+                                         haiku (force Haiku).
+  MEMORY_CLAUDE_TAGS=a,b                 allowlist: only inject delta entries
+                                         whose tags intersect this set.
+  MEMORY_CLAUDE_EXCLUDE_TAGS=x,y         blocklist: skip entries with these tags.
+  MEMORY_CLAUDE_TAGS_STRICT=1            with MEMORY_CLAUDE_TAGS set, exclude
+                                         untagged entries too.
+  MEMORY_CLAUDE_DEBUG=1                  persist per-turn injection deltas to
+                                         snapshots/<sid>-turn-<epoch>.md.
 EOF
 }
 
 VERSION="0.1.0"
 
-# Reserved subcommands
+# A subcommand is any executable .sh in src/cmd/. This auto-discovers new
+# commands (e.g. note, search) without editing this file.
 is_subcommand() {
-  case "$1" in
-    list|monitor|show|tail|compact|destroy|doctor) return 0 ;;
-    *) return 1 ;;
-  esac
+  [[ -n "$1" && -f "$CMD/${1}.sh" ]]
 }
 
 is_valid_key() {
