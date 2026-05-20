@@ -64,12 +64,24 @@ render() {
   # Recent findings (summary + note + automemory)
   printf '## Recent activity\n'
   tail -n 40 "$POOL" | jq -r '
-    select(.kind == "summary" or .kind == "note") |
-    "- [\(.ts[11:16]) \(.sid[0:4])] \(.text)"
+    select(.kind == "summary" or .kind == "note")
+    | (if .git then " @\(.git.branch)" else "" end) as $branch
+    | (if (.tags // []) | length > 0
+       then "  #\(((.tags // []) | join(" #")))"
+       else "" end) as $tagstr
+    | if .kind == "note" then
+        "- [\(.ts[11:16]) NOTE\($branch)] \(.text)\($tagstr)"
+      else
+        "- [\(.ts[11:16]) \(.sid[0:4])\($branch)] \(.text)\($tagstr)"
+        + (if .prompt then "\n  Q: \(.prompt[0:140])" else "" end)
+      end
   ' 2>/dev/null || true
   tail -n 40 "$POOL" | jq -r '
-    select(.kind == "automemory") |
-    "- [auto-memory · \(.sid[0:4]) in \(.cwd | split("/") | last)] (\(.type // "?")) \(.name): \(.description // .body_excerpt // "")"
+    select(.kind == "automemory")
+    | (if (.tags // []) | length > 0
+       then "  #\(((.tags // []) | join(" #")))"
+       else "" end) as $tagstr
+    | "- [auto-memory · \(.sid[0:4]) in \(.cwd | split("/") | last)] (\(.type // "?")) \(.name): \(.description // .body_excerpt // "")\($tagstr)"
   ' 2>/dev/null || true
 
   printf '\n## Connected now\n'

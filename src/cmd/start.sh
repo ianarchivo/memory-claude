@@ -64,6 +64,12 @@ sessions may be writing notes and auto-memory to a shared pool. At the start
 of each user turn, NEW entries from other sessions will be injected as a delta.
 Treat the pool as background knowledge — be concise, do not re-summarize it back.
 
+When you reach a non-obvious conclusion, rule out an approach, or make a
+decision a future session should inherit, run:
+  memory-claude $KEY note "<finding>" --tag <topic>
+to encode it intentionally. The auto-compressed Stop summary is a fallback,
+not the primary memory channel — important decisions belong in explicit notes.
+
 Current pool snapshot:
 
 $(cat "$SNAPSHOT_FILE")

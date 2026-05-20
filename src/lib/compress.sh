@@ -2,8 +2,11 @@
 # compress.sh — caveman-lite compression of an assistant turn.
 # stdin: full assistant text. stdout: 1-3 short bullets (no leading dash), one per line.
 #
-# Default = rule-based, $0 cost, ~50ms.
-# Opt-in via MEMORY_CLAUDE_COMPRESS=haiku + ANTHROPIC_API_KEY.
+# MEMORY_CLAUDE_COMPRESS values:
+#   rule-based  (default) — local heuristic, $0, ~50ms.
+#   auto                  — prefer Haiku when ANTHROPIC_API_KEY is set,
+#                           silent fallback to rule-based otherwise.
+#   haiku                 — force Haiku (still falls back if no key / network).
 
 set -euo pipefail
 
@@ -19,19 +22,35 @@ rule_based() {
     | sed -E 's/<[^>]+>//g' \
     | sed -E 's/`([^`]*)`/\1/g')
 
-  # Take the first 1-3 short, informative-looking sentences.
-  # Lower min length so short replies still emit at least one bullet.
+  # Inverted heuristic: take the LAST 3 informative-looking sentences (the
+  # conclusion), not the first. Assistant turns put the answer at the end;
+  # the opener is conversational filler.
   printf '%s' "$stripped" \
     | tr '\n' ' ' \
     | sed -E 's/  +/ /g' \
-    | awk 'BEGIN{RS="[.!?] "} {
-        gsub(/^[[:space:]]+|[[:space:]]+$/,"")
-        if (length($0) > 3 && length($0) < 240 && $0 !~ /^(I |Let me |I.ll |Here|Now|Let.s )/) {
-          print $0
-          n++
-          if (n >= 3) exit
+    | awk '
+        BEGIN { RS = "[.!?] " ; n = 0 }
+        {
+          gsub(/^[[:space:]]+|[[:space:]]+$/, "")
+          # Length window: skip super-short fragments and runaway paragraphs.
+          if (length($0) <= 3 || length($0) >= 240) next
+          # Filler-opener blocklist. Sentence-start words that almost never
+          # carry the actual finding.
+          if ($0 ~ /^(I |Let me |I.ll |Here|Now|Let.s |Good[, ]|Great[, ]|Sure[, ]|Of course|Absolutely|Right,|OK,|Yes[, ]|No[, ])/) next
+          # Skip markdown headings flattened into the text stream.
+          if ($0 ~ /^#+ /) next
+          # Skip "intro:" style colon-trailing sentences (e.g. "Three things:").
+          if ($0 ~ /:$/) next
+          # Skip naked link or path lines.
+          if ($0 ~ /^https?:\/\// || $0 ~ /^\//) next
+          arr[++n] = $0
         }
-      }'
+        END {
+          # Last 3 surviving sentences, preserving order.
+          start = (n > 3 ? n - 2 : 1)
+          for (i = start; i <= n; i++) print arr[i]
+        }
+      '
 }
 
 haiku_based() {
@@ -59,9 +78,17 @@ $INPUT" '{
     | head -3
 }
 
-if [[ "${MEMORY_CLAUDE_COMPRESS:-rule}" == "haiku" ]] && [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
-  out=$(haiku_based)
-  if [[ -z "${out// /}" ]]; then rule_based; else printf '%s\n' "$out"; fi
-else
-  rule_based
-fi
+MODE="${MEMORY_CLAUDE_COMPRESS:-rule-based}"
+case "$MODE" in
+  haiku|auto)
+    if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+      out=$(haiku_based)
+      if [[ -z "${out// /}" ]]; then rule_based; else printf '%s\n' "$out"; fi
+    else
+      rule_based
+    fi
+    ;;
+  *)
+    rule_based
+    ;;
+esac
