@@ -19,12 +19,13 @@ rule_based() {
     | sed -E 's/`[^`]*`//g')
 
   # Take the first 1-3 short, informative-looking sentences.
+  # Lower min length so short replies still emit at least one bullet.
   printf '%s' "$stripped" \
     | tr '\n' ' ' \
     | sed -E 's/  +/ /g' \
     | awk 'BEGIN{RS="[.!?] "} {
         gsub(/^[[:space:]]+|[[:space:]]+$/,"")
-        if (length($0) > 15 && length($0) < 240 && $0 !~ /^(I |Let me |I.ll |Here|Now|Let.s )/) {
+        if (length($0) > 3 && length($0) < 240 && $0 !~ /^(I |Let me |I.ll |Here|Now|Let.s )/) {
           print $0
           n++
           if (n >= 3) exit

@@ -103,8 +103,8 @@ if [[ -z "$RESUME_ID" ]]; then
 fi
 
 exec "$REAL_CLAUDE" \
-  "${EXTRA_FLAGS[@]}" \
+  ${EXTRA_FLAGS[@]+"${EXTRA_FLAGS[@]}"} \
   --append-system-prompt "$HEADER" \
   --settings "$HOOKS_JSON" \
   --setting-sources user,local \
-  "${PASS_ARGS[@]}"
+  ${PASS_ARGS[@]+"${PASS_ARGS[@]}"}

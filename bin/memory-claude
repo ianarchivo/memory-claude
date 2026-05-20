@@ -66,6 +66,11 @@ is_subcommand() {
   esac
 }
 
+is_valid_key() {
+  # 2-64 chars, lowercase letter first, then a-z 0-9 or dashes, no trailing dash.
+  [[ "$1" =~ ^[a-z][a-z0-9-]{0,62}[a-z0-9]$ ]]
+}
+
 # Top-level flags
 case "${1:-}" in
   "-h"|"--help") usage; exit 0 ;;
@@ -76,24 +81,48 @@ case "${1:-}" in
     exec bash "$CMD/list.sh"
     ;;
   "")
-    # `memory-claude` with no args -> mint a new key and launch
+    # `memory-claude` with no args -> mint a new key and launch.
+    # `memory-claude "" something` -> reject; ambiguous.
+    if [[ $# -gt 1 ]]; then
+      echo "memory-claude: empty key is not allowed with extra arguments." >&2
+      echo "Run 'memory-claude' to mint a key, or provide one explicitly." >&2
+      exit 1
+    fi
     exec bash "$CMD/start.sh" ""
+    ;;
+  "--")
+    # `memory-claude -- <claude-args>` -> mint a key, pass everything else to claude
+    shift
+    exec bash "$CMD/start.sh" "" "$@"
     ;;
 esac
 
-# Otherwise the first arg is treated as a key (or a request to mint one).
+# If first arg is a claude-style flag, mint a key and pass through to claude.
+if [[ "${1:0:1}" == "-" ]]; then
+  exec bash "$CMD/start.sh" "" "$@"
+fi
+
+# Otherwise the first arg is treated as a key (or a subcommand without one).
 ARG1="$1"; shift || true
 
-# Case: first arg is actually a subcommand (without key). Reject.
+# Case: first arg is a subcommand without a key. Reject (with the exception of
+# `list` and `doctor`, already handled above).
 if is_subcommand "$ARG1"; then
   echo "memory-claude: subcommand '$ARG1' requires a key. usage: memory-claude <key> $ARG1" >&2
+  exit 1
+fi
+
+# Validate the key name.
+if ! is_valid_key "$ARG1"; then
+  echo "memory-claude: '$ARG1' is not a valid key name." >&2
+  echo "Keys must be 2-64 chars, lowercase, start with a letter, contain only a-z 0-9 and dashes." >&2
   exit 1
 fi
 
 KEY="$ARG1"
 SUBCMD="${1:-}"
 
-# Check if next arg is a recognized subcommand
+# If next arg is a recognized subcommand, dispatch to it.
 if [[ -n "$SUBCMD" ]] && is_subcommand "$SUBCMD"; then
   shift
   exec bash "$CMD/${SUBCMD}.sh" "$KEY" "$@"

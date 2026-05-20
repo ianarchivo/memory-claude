@@ -21,16 +21,18 @@ done
 # Create install dirs
 mkdir -p "$MC_ROOT"/{bin,lib}
 
-# Copy libs (so hook paths don't depend on repo location)
-cp "$REPO_ROOT/src/lib/"*.sh "$MC_ROOT/lib/"
-chmod +x "$MC_ROOT/lib/"*.sh
+# Symlink libs (so edits in the repo are live; no reinstall needed)
+for f in "$REPO_ROOT/src/lib/"*.sh; do
+  name=$(basename "$f")
+  ln -sf "$f" "$MC_ROOT/lib/$name"
+done
 
-# Copy hooks with hook-<name>.sh naming
-cp "$REPO_ROOT/src/hooks/session-start.sh"  "$MC_ROOT/bin/hook-session-start.sh"
-cp "$REPO_ROOT/src/hooks/user-prompt.sh"    "$MC_ROOT/bin/hook-user-prompt.sh"
-cp "$REPO_ROOT/src/hooks/stop.sh"           "$MC_ROOT/bin/hook-stop.sh"
-cp "$REPO_ROOT/src/hooks/session-end.sh"    "$MC_ROOT/bin/hook-session-end.sh"
-chmod +x "$MC_ROOT/bin/"*.sh
+# Symlink hooks with hook-<name>.sh naming
+ln -sf "$REPO_ROOT/src/hooks/session-start.sh"  "$MC_ROOT/bin/hook-session-start.sh"
+ln -sf "$REPO_ROOT/src/hooks/user-prompt.sh"    "$MC_ROOT/bin/hook-user-prompt.sh"
+ln -sf "$REPO_ROOT/src/hooks/stop.sh"           "$MC_ROOT/bin/hook-stop.sh"
+ln -sf "$REPO_ROOT/src/hooks/session-end.sh"    "$MC_ROOT/bin/hook-session-end.sh"
+chmod +x "$REPO_ROOT/src/lib/"*.sh "$REPO_ROOT/src/hooks/"*.sh
 
 # Make entrypoint executable
 chmod +x "$REPO_ROOT/bin/memory-claude"

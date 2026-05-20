@@ -32,30 +32,54 @@ if [[ -z "$TRANSCRIPT" ]]; then
 fi
 
 # --- 1) Turn summary
-if [[ -f "$TRANSCRIPT" ]]; then
-  if command -v tac >/dev/null 2>&1; then
-    REV_CAT="tac"
-  else
-    REV_CAT="tail -r"
-  fi
+# Track the byte offset of the transcript we last summarized so we never
+# emit a duplicate summary for the same assistant turn (re-runs, polls, etc.)
+TR_CURSOR_FILE="$KEY_DIR/seen/$SID.transcript.cursor"
+TR_LAST_OFFSET=$(cat "$TR_CURSOR_FILE" 2>/dev/null || echo 0)
 
-  LAST_TEXT=$($REV_CAT "$TRANSCRIPT" 2>/dev/null \
-    | grep -m1 '"type":"assistant"' \
-    | jq -r '.. | objects | select(.type == "text") | .text' 2>/dev/null \
-    | tr -d '\000' || true)
-
-  if [[ -n "${LAST_TEXT// /}" ]]; then
-    SUMMARY=$(printf '%s' "$LAST_TEXT" | "$LIB_DIR/compress.sh" 2>/dev/null || true)
-    if [[ -n "${SUMMARY// /}" ]]; then
-      while IFS= read -r line; do
-        [[ -z "${line// /}" ]] && continue
-        # Strip leading bullet glyphs if Haiku output included them
-        clean=$(printf '%s' "$line" | sed -E 's/^[[:space:]]*[-*•][[:space:]]*//')
-        json_line=$(jq -nc --arg ts "$NOW" --arg sid "$SID" --arg cwd "$CWD" --arg text "$clean" \
-          '{ts:$ts, sid:$sid, kind:"summary", text:$text, cwd:$cwd}')
-        mc_append_locked "$POOL" "$json_line"
-      done <<< "$SUMMARY"
+LAST_TEXT=""
+LAST_ASSISTANT_LINE=""
+# Poll up to ~3 seconds (15 × 200ms) for a NEW assistant entry beyond our
+# cursor. claude in -p mode flushes the assistant turn close to Stop firing,
+# and on macOS reading a being-written file can also race.
+for _attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+  if [[ -f "$TRANSCRIPT" ]]; then
+    cur_size=$(wc -c < "$TRANSCRIPT" 2>/dev/null | tr -d ' ' || echo 0)
+    if (( cur_size > TR_LAST_OFFSET )); then
+      # Read only bytes past the cursor; grep for assistant lines; take last.
+      LAST_ASSISTANT_LINE=$(tail -c +$((TR_LAST_OFFSET + 1)) "$TRANSCRIPT" 2>/dev/null \
+        | grep '"type":"assistant"' \
+        | tail -n 1 || true)
+      if [[ -n "$LAST_ASSISTANT_LINE" ]]; then
+        # Extract concatenated text content blocks
+        LAST_TEXT=$(printf '%s' "$LAST_ASSISTANT_LINE" \
+          | jq -r '[.message.content[]? | select(.type=="text") | .text] | join(" ")' 2>/dev/null \
+          | tr -d '\000' || true)
+        if [[ -n "${LAST_TEXT// /}" ]]; then
+          break
+        fi
+      fi
     fi
+  fi
+  sleep 0.2
+done
+
+# Advance transcript cursor to current EOF either way, so we never re-scan
+# the same bytes on subsequent Stop invocations.
+if [[ -f "$TRANSCRIPT" ]]; then
+  wc -c < "$TRANSCRIPT" 2>/dev/null | tr -d ' ' > "$TR_CURSOR_FILE" || true
+fi
+
+if [[ -n "${LAST_TEXT// /}" ]]; then
+  SUMMARY=$(printf '%s' "$LAST_TEXT" | "$LIB_DIR/compress.sh" 2>/dev/null || true)
+  if [[ -n "${SUMMARY// /}" ]]; then
+    while IFS= read -r line; do
+      [[ -z "${line// /}" ]] && continue
+      clean=$(printf '%s' "$line" | sed -E 's/^[[:space:]]*[-*•][[:space:]]*//')
+      json_line=$(jq -nc --arg ts "$NOW" --arg sid "$SID" --arg cwd "$CWD" --arg text "$clean" \
+        '{ts:$ts, sid:$sid, kind:"summary", text:$text, cwd:$cwd}')
+      mc_append_locked "$POOL" "$json_line"
+    done <<< "$SUMMARY"
   fi
 fi
 
