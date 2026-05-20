@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+# memory-claude — wrap `claude` with a keyed shared-memory pool across sessions.
+# usage: memory-claude [<key>] [<subcommand>] [args...]
+
+set -euo pipefail
+
+# Resolve script's source location to find src/, even via symlink.
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+while [[ -L "$SCRIPT_PATH" ]]; do
+  target=$(readlink "$SCRIPT_PATH")
+  if [[ "$target" = /* ]]; then
+    SCRIPT_PATH="$target"
+  else
+    SCRIPT_PATH="$(cd "$(dirname "$SCRIPT_PATH")" && cd "$(dirname "$target")" && pwd)/$(basename "$target")"
+  fi
+done
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+SRC="$REPO_ROOT/src"
+LIB="$SRC/lib"
+CMD="$SRC/cmd"
+
+# Default install root for hook script discovery (used by start.sh)
+export MC_ROOT="${MC_ROOT:-$HOME/.memory-claude}"
+
+# shellcheck disable=SC1091
+source "$LIB/core.sh"
+
+usage() {
+  cat <<EOF
+memory-claude — keyed shared memory across Claude Code sessions
+
+Launch:
+  memory-claude                          mint a new key and start a session
+  memory-claude <key>                    join an existing key and start a session
+  memory-claude <key> --resume <uuid>    resume a specific session under the key
+  memory-claude <key> -- <claude-args>   pass remaining args directly to claude
+
+Inspect:
+  memory-claude list                     list all known keys
+  memory-claude <key> list               list sessions on this key
+  memory-claude <key> monitor            live view of sessions + pool
+  memory-claude <key> show               print pool.md
+  memory-claude <key> tail [-n N] [-f]   tail pool.ndjson decoded
+  memory-claude <key> compact            rotate + render pool.md
+
+Manage:
+  memory-claude <key> destroy [--yes]    delete key dir
+  memory-claude doctor                   smoke-test the install
+  memory-claude --version
+  memory-claude --help
+
+Env:
+  MEMORY_CLAUDE_COMPRESS=haiku           opt into Haiku compression
+                                         (also needs ANTHROPIC_API_KEY)
+EOF
+}
+
+VERSION="0.1.0"
+
+# Reserved subcommands
+is_subcommand() {
+  case "$1" in
+    list|monitor|show|tail|compact|destroy|doctor) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Top-level flags
+case "${1:-}" in
+  ""|"-h"|"--help") usage; exit 0 ;;
+  "--version") echo "memory-claude $VERSION"; exit 0 ;;
+  "doctor") exec bash "$CMD/doctor.sh" ;;
+  "list")
+    # `memory-claude list` (no key) -> list all keys
+    exec bash "$CMD/list.sh"
+    ;;
+esac
+
+# Otherwise the first arg is treated as a key (or a request to mint one).
+ARG1="$1"; shift || true
+
+# Case: first arg is actually a subcommand (without key). Reject.
+if is_subcommand "$ARG1"; then
+  echo "memory-claude: subcommand '$ARG1' requires a key. usage: memory-claude <key> $ARG1" >&2
+  exit 1
+fi
+
+KEY="$ARG1"
+SUBCMD="${1:-}"
+
+# Check if next arg is a recognized subcommand
+if [[ -n "$SUBCMD" ]] && is_subcommand "$SUBCMD"; then
+  shift
+  exec bash "$CMD/${SUBCMD}.sh" "$KEY" "$@"
+fi
+
+# Otherwise: launch (mint or join). Remaining args go to claude.
+exec bash "$CMD/start.sh" "$KEY" "$@"
