@@ -62,7 +62,7 @@ HEADER=$(cat <<EOF
 You are part of a memory-claude shared session under key '$KEY'. Other Claude
 sessions may be writing notes and auto-memory to a shared pool. At the start
 of each user turn, NEW entries from other sessions will be injected as a delta.
-Treat the pool as background knowledge — be concise, don't re-summarize it back.
+Treat the pool as background knowledge — be concise, do not re-summarize it back.
 
 Current pool snapshot:
 
